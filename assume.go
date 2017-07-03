@@ -9,9 +9,6 @@ import (
 	"os"
 	"flag"
 	"time"
-	//	"github.com/aws/aws-sdk-go/aws/credentials"
-	//	"github.com/aws/aws-sdk-go/aws"
-	//	"github.com/aws/aws-sdk-go/aws/credentials"
 )
 
 const (
@@ -37,7 +34,7 @@ func main() {
 	flag.StringVar(&externalId, "i", "", "External ID")
 	flag.StringVar(&roleArn, "r", "", "Role ARN")
 	flag.StringVar(&roleSessionName, "s", "", "Role session name")
-	flag.StringVar(&profile, "p", "", "AWS profile to try if not on EC2")
+	flag.StringVar(&profile, "p", "default", "AWS profile to try if not on EC2")
 	flag.BoolVar(&verbosity, "v", false, "Verbose output")
 
 	flag.Parse()
@@ -54,17 +51,19 @@ func main() {
 		roleSessionName = defaultSessionName()
 	}
 
-	s := session.New()
+	s, err := session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+		Profile: profile,
+	})
+
+	if err != nil {
+		errorExit(err)
+	}
 
 	verbose("Checking for EC2...")
 	svc := ec2metadata.New(s)
 	onEc2 = svc.Available()
 	verbose("EC2 found: %t", onEc2)
-
-	if !onEc2 && profile == "" {
-		verbose("Not on EC2, no profile specified, giving up")
-
-	}
 
 	//Try and assume role
 
@@ -82,37 +81,13 @@ func main() {
 	}
 
 	var result *sts.AssumeRoleOutput
-	var err error
 
-	if onEc2 {
+	stsSvc := sts.New(s)
 
-		svc := sts.New(s)
+	result, err = stsSvc.AssumeRole(input)
 
-		result, err = svc.AssumeRole(input)
-		if err != nil {
-			errorExit(err)
-		}
-
-	} else {
-
-		verbose("Not on EC2, trying profile: %s", profile)
-
-		s, err := session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-			Profile: profile,
-		})
-
-		if err != nil {
-			errorExit(err)
-		}
-
-		svc := sts.New(s)
-
-		result, err = svc.AssumeRole(input)
-
-		if err != nil {
-			errorExit(err)
-		}
+	if err != nil {
+		errorExit(err)
 	}
 
 	verbose("Role assumed: %s", *result.AssumedRoleUser.Arn)
